@@ -1,0 +1,79 @@
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from stable_baselines3 import PPO
+from rl_environment import MarketMakerEnv
+
+def run_flash_crash_test():
+    print("Loading 6-Variable Environment...")
+    env = MarketMakerEnv()
+    model_path=os.path.join("models","ppo_market_maker_v2_1M")
+    try:
+        model = PPO.load(model_path)
+    except FileNotFoundError:
+        print("Error: Could not find the V2 model.")
+        return
+    history_mid=[]
+    history_ask=[]
+    history_bid=[]
+    history_intensity=[]
+    history_inventory=[]
+    obs,info = env.reset()
+    done=False
+    print("Simulating Normal Market (Ticks 0 - 1000)")
+    step=0
+    while not done:
+        if step==1000:
+            print("FLASH CRASH INITIATED!")
+            print("Multiply Hawkes Baseline intensity by 10x!")
+            env.hawkes.mu = env.hawkes.mu * 10.0
+        action, _states = model.predict(obs, deterministic=True)
+        current_mid = env.book.get_mid_price() or 100.0
+        bid_depth = float(action[0])
+        ask_depth = float(action[1])
+        my_bid = current_mid - bid_depth
+        my_ask = current_mid + ask_depth
+        obs, reward, terminated, truncated, info = env.step(action)
+        history_mid.append(current_mid)
+        history_bid.append(my_bid)
+        history_ask.append(my_ask)
+        history_intensity.append(env.hawkes.curr_intensity)
+        history_inventory.append(env.inventory)
+        step+=1
+        if terminated or truncated:
+            done = True
+    print(f"Simulation Finished! Final Inventory: {env.inventory}")
+    print("Rendering Flash Crash Dashboard...")
+
+    fig, (ax1, ax2, ax3) = plt.subplots(3,1, figsize=(12,10), sharex=True)
+    time_steps = np.arange(len(history_mid))
+
+    ax1.plot(time_steps, history_mid, label="Mid Price", color="black", linewidth=1.5)
+    ax1.plot(time_steps, history_ask, label="AI Ask Quote", color='red', alpha=0.8, linewidth=1)
+    ax1.plot(time_steps, history_bid, label="AI Bid Quote", color='green', alpha=0.8, linewidth=1)
+    ax1.axvline(1000, color='red', linestyle='--', alpha=0.8, label="Crash Starts")
+    ax1.set_title("Flash Crash Stress Test: AI Quotes vs. Mid Price")
+    ax1.set_ylabel("Price ($)")
+    ax1.legend(loc="upper left")
+    ax1.grid(True, alpha=0.3)
+    
+    ax2.plot(time_steps, history_intensity, color='purple', linewidth=1)
+    ax2.fill_between(time_steps, history_intensity, color='purple', alpha=0.2)
+    ax2.axvline(1000, color='red', linestyle='--', alpha=0.8)
+    ax2.set_title("Hawkes Process Intensity (Notice the massive shift at 1000)")
+    ax2.set_ylabel("Intensity")
+    ax2.grid(True, alpha=0.3)
+    
+    ax3.plot(time_steps, history_inventory, color='blue', linewidth=1.5)
+    ax3.axhline(0, color='black', linestyle='--', alpha=0.5)
+    ax3.axvline(1000, color='red', linestyle='--', alpha=0.8)
+    ax3.set_title("Agent Inventory Position")
+    ax3.set_xlabel("Time (Ticks)")
+    ax3.set_ylabel("Shares Held")
+    ax3.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    run_flash_crash_test()
